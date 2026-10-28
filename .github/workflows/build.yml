@@ -41,7 +41,12 @@ jobs:
             --security false \
             --archive-areas "main contrib non-free non-free-firmware"
 
+          sudo sed -i \
+            's|https://deb.debian.org/debian/|https://deb.debian.org/debian|g' \
+            config/bootstrap
+
           sudo mkdir -p config/archives
+
           sudo tee config/archives/security.list.chroot > /dev/null <<'EOF'
           deb https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
           EOF
