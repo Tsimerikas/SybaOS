@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   build:
+    name: Build bootable ISO
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -16,23 +17,35 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap \
-            squashfs-tools xorriso
+          sudo apt-get install -y \
+            live-build \
+            debootstrap \
+            debian-archive-keyring \
+            squashfs-tools \
+            xorriso \
+            rsync
 
-      - name: Configure SybaOS
+      - name: Configure SybaOS Glass
         run: |
-          mkdir sybaos
+          mkdir -p sybaos
           cd sybaos
 
           sudo lb config \
+            --mode debian \
             --distribution trixie \
             --architectures amd64 \
             --binary-images iso-hybrid \
+            --mirror-bootstrap https://deb.debian.org/debian/ \
+            --mirror-chroot https://deb.debian.org/debian/ \
+            --mirror-binary https://deb.debian.org/debian/ \
             --archive-areas "main contrib non-free non-free-firmware"
 
           sudo mkdir -p config/package-lists
 
-          sudo tee config/package-lists/sybaos.list.chroot >/dev/null <<'EOF'
+          sudo tee config/package-lists/sybaos.list.chroot > /dev/null <<'EOF'
+          linux-image-amd64
+          live-boot
+          systemd-sysv
           task-xfce-desktop
           lightdm
           firefox-esr
@@ -54,11 +67,17 @@ jobs:
         run: |
           cd sybaos
           sudo lb build
-          sudo find . -maxdepth 1 -type f \
-            -name '*.iso' \
+
+          sudo find . -maxdepth 1 -type f -name '*.iso' \
             -exec cp {} "$GITHUB_WORKSPACE/" \;
-          test -n "$(find "$GITHUB_WORKSPACE" \
-            -maxdepth 1 -name '*.iso' -print -quit)"
+
+          if ! find "$GITHUB_WORKSPACE" -maxdepth 1 \
+            -type f -name '*.iso' -print -quit | grep -q .; then
+            echo "ERROR: No ISO file was generated."
+            exit 1
+          fi
+
+          ls -lh "$GITHUB_WORKSPACE"/*.iso
 
       - name: Upload ISO
         uses: actions/upload-artifact@v4
