@@ -36,90 +36,7 @@ jobs:
             ca-certificates \
             python3
 
-      - name: Inspect live-build kernel helper
-        shell: bash
-        run: |
-          echo "=== live-build version ==="
-          lb --version || true
-
-          echo "=== Locate kernel helper ==="
-          dpkg -L live-build | grep 'lb_chroot_linux-image' || true
-
-          echo "=== Search for Contents URL ==="
-          sudo grep -R -n -E \
-            'Contents-|LB_DISTRIBUTION|LB_MIRROR_CHROOT' \
-            /usr/lib/live/build \
-            /usr/share/live/build \
-            /usr/bin/lb \
-            2>/dev/null || true
-
-      - name: Patch live-build Contents URL
-        shell: bash
-        run: |
-          set -e
-
-          sudo python3 <<'PY'
-          import pathlib
-          import subprocess
-          import re
-          import sys
-
-          result = subprocess.run(
-              ["dpkg-query", "-L", "live-build"],
-              capture_output=True,
-              text=True,
-              check=True
-          )
-
-          files = [
-              pathlib.Path(line)
-              for line in result.stdout.splitlines()
-              if line and pathlib.Path(line).is_file()
-          ]
-
-          changed_any = False
-
-          for path in files:
-              try:
-                  original = path.read_text()
-              except (UnicodeDecodeError, OSError):
-                  continue
-
-              updated = original
-
-              # Handle common ways live-build constructs the URL.
-              updated = updated.replace(
-                  '/dists/${LB_DISTRIBUTION}/Contents-${LB_ARCHITECTURE}.gz',
-                  '/dists/${LB_DISTRIBUTION}/main/Contents-${LB_ARCHITECTURE}.gz'
-              )
-
-              updated = updated.replace(
-                  '/dists/$LB_DISTRIBUTION/Contents-$LB_ARCHITECTURE.gz',
-                  '/dists/$LB_DISTRIBUTION/main/Contents-$LB_ARCHITECTURE.gz'
-              )
-
-              updated = updated.replace(
-                  '/dists/${LB_DISTRIBUTION}/Contents-${LB_ARCHITECTURE}',
-                  '/dists/${LB_DISTRIBUTION}/main/Contents-${LB_ARCHITECTURE}'
-              )
-
-              if updated != original:
-                  backup = path.with_suffix(
-                      path.suffix + ".sybaos-backup"
-                  )
-                  backup.write_text(original)
-                  path.write_text(updated)
-                  print(f"Patched: {path}")
-                  changed_any = True
-
-          if not changed_any:
-              print(
-                  "No known URL pattern was found. "
-                  "The diagnostic output above will help identify the actual code."
-              )
-          PY
-
-      - name: Prepare SybaOS configuration
+      - name: Prepare SybaOS package lists
         shell: bash
         run: |
           set -e
@@ -163,7 +80,7 @@ jobs:
             --distribution trixie \
             --architectures amd64 \
             --binary-images iso-hybrid \
-            --linux-packages linux-image-amd64 \
+            --linux-packages none \
             --mirror-bootstrap https://deb.debian.org/debian/ \
             --mirror-chroot https://deb.debian.org/debian/ \
             --mirror-binary https://deb.debian.org/debian/ \
@@ -182,7 +99,7 @@ jobs:
         run: |
           set -e
 
-          ISO_FILE="$(find . -maxdepth 3 -type f -name '*.iso' -print -quit)"
+          ISO_FILE="$(find . -maxdepth 4 -type f -name '*.iso' -print -quit)"
 
           if [ -z "$ISO_FILE" ]; then
             echo "ERROR: No ISO file was generated."
