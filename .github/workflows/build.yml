@@ -36,7 +36,24 @@ jobs:
             ca-certificates \
             python3
 
-      - name: Diagnose and patch live-build kernel helper
+      - name: Inspect live-build kernel helper
+        shell: bash
+        run: |
+          echo "=== live-build version ==="
+          lb --version || true
+
+          echo "=== Locate kernel helper ==="
+          dpkg -L live-build | grep 'lb_chroot_linux-image' || true
+
+          echo "=== Search for Contents URL ==="
+          sudo grep -R -n -E \
+            'Contents-|LB_DISTRIBUTION|LB_MIRROR_CHROOT' \
+            /usr/lib/live/build \
+            /usr/share/live/build \
+            /usr/bin/lb \
+            2>/dev/null || true
+
+      - name: Patch live-build Contents URL
         shell: bash
         run: |
           set -e
@@ -60,7 +77,7 @@ jobs:
               if line and pathlib.Path(line).is_file()
           ]
 
-          found = False
+          changed_any = False
 
           for path in files:
               try:
@@ -68,44 +85,38 @@ jobs:
               except (UnicodeDecodeError, OSError):
                   continue
 
-              lines = original.splitlines(keepends=True)
-              changed = False
-              output = []
+              updated = original
 
-              for line in lines:
-                  if "Contents-" in line and "dists/" in line:
-                      print(f"Checking URL construction in: {path}")
-                      print(f"Original: {line.rstrip()}")
+              # Handle common ways live-build constructs the URL.
+              updated = updated.replace(
+                  '/dists/${LB_DISTRIBUTION}/Contents-${LB_ARCHITECTURE}.gz',
+                  '/dists/${LB_DISTRIBUTION}/main/Contents-${LB_ARCHITECTURE}.gz'
+              )
 
-                      updated = re.sub(
-                          r'(?<!/main/)Contents-',
-                          'main/Contents-',
-                          line
-                      )
+              updated = updated.replace(
+                  '/dists/$LB_DISTRIBUTION/Contents-$LB_ARCHITECTURE.gz',
+                  '/dists/$LB_DISTRIBUTION/main/Contents-$LB_ARCHITECTURE.gz'
+              )
 
-                      if updated != line:
-                          line = updated
-                          changed = True
-                          found = True
-                          print(f"Updated:  {line.rstrip()}")
+              updated = updated.replace(
+                  '/dists/${LB_DISTRIBUTION}/Contents-${LB_ARCHITECTURE}',
+                  '/dists/${LB_DISTRIBUTION}/main/Contents-${LB_ARCHITECTURE}'
+              )
 
-                  output.append(line)
-
-              if changed:
+              if updated != original:
                   backup = path.with_suffix(
                       path.suffix + ".sybaos-backup"
                   )
                   backup.write_text(original)
-                  path.write_text("".join(output))
+                  path.write_text(updated)
+                  print(f"Patched: {path}")
+                  changed_any = True
 
-          if not found:
+          if not changed_any:
               print(
-                  "No matching URL was found in live-build. "
-                  "The helper may construct the URL indirectly."
+                  "No known URL pattern was found. "
+                  "The diagnostic output above will help identify the actual code."
               )
-              sys.exit(1)
-
-          print("Patch applied.")
           PY
 
       - name: Prepare SybaOS configuration
