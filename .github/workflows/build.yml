@@ -42,6 +42,11 @@ jobs:
             --mirror-binary-security https://security.debian.org/debian-security/ \
             --archive-areas "main contrib non-free non-free-firmware"
 
+          sudo mkdir -p config/archives
+          sudo tee config/archives/security.list.chroot > /dev/null <<'EOF'
+          deb https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+          EOF
+
           sudo mkdir -p config/package-lists
 
           sudo tee config/package-lists/sybaos.list.chroot > /dev/null <<'EOF'
