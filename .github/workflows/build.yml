@@ -36,61 +36,76 @@ jobs:
             ca-certificates \
             python3
 
-      - name: Locate and patch live-build
+      - name: Diagnose and patch live-build kernel helper
         shell: bash
         run: |
           set -e
 
-          echo "Searching for live-build scripts..."
-
-          LB_SCRIPT="$(command -v lb)"
-          echo "lb executable: $LB_SCRIPT"
-
-          dpkg -L live-build | grep -E 'lb_chroot_linux-image$' || true
-
-          SCRIPT="$(dpkg -L live-build | grep -E '/lb_chroot_linux-image$' | head -n 1 || true)"
-
-          if [ -z "$SCRIPT" ]; then
-            echo "Kernel helper script not found at the expected path."
-            echo "Listing relevant installed files:"
-            dpkg -L live-build | grep -E 'linux-image|linux_image|live/build' | head -100 || true
-            exit 0
-          fi
-
-          echo "Found helper: $SCRIPT"
-          sudo cp "$SCRIPT" "${SCRIPT}.original"
-
-          sudo python3 - "$SCRIPT" <<'PY'
+          sudo python3 <<'PY'
           import pathlib
+          import subprocess
+          import re
           import sys
 
-          path = pathlib.Path(sys.argv[1])
-          text = path.read_text()
+          result = subprocess.run(
+              ["dpkg-query", "-L", "live-build"],
+              capture_output=True,
+              text=True,
+              check=True
+          )
 
-          replacements = [
-              (
-                  '/dists/${LB_DISTRIBUTION}/Contents-${LB_ARCHITECTURE}.gz',
-                  '/dists/${LB_DISTRIBUTION}/main/Contents-${LB_ARCHITECTURE}.gz'
-              ),
-              (
-                  '/dists/$LB_DISTRIBUTION/Contents-$LB_ARCHITECTURE.gz',
-                  '/dists/$LB_DISTRIBUTION/main/Contents-$LB_ARCHITECTURE.gz'
-              ),
+          files = [
+              pathlib.Path(line)
+              for line in result.stdout.splitlines()
+              if line and pathlib.Path(line).is_file()
           ]
 
-          updated = text
-          for old, new in replacements:
-              updated = updated.replace(old, new)
+          found = False
 
-          if updated != text:
-              path.write_text(updated)
-              print("Patched the Contents URL.")
-          else:
-              print("No matching URL found; the helper was left unchanged.")
-              print("Relevant lines:")
-              for line in text.splitlines():
-                  if "Contents-" in line or "Contents-" in line.replace(" ", ""):
-                      print(line)
+          for path in files:
+              try:
+                  original = path.read_text()
+              except (UnicodeDecodeError, OSError):
+                  continue
+
+              lines = original.splitlines(keepends=True)
+              changed = False
+              output = []
+
+              for line in lines:
+                  if "Contents-" in line and "dists/" in line:
+                      print(f"Checking URL construction in: {path}")
+                      print(f"Original: {line.rstrip()}")
+
+                      updated = re.sub(
+                          r'(?<!/main/)Contents-',
+                          'main/Contents-',
+                          line
+                      )
+
+                      if updated != line:
+                          line = updated
+                          changed = True
+                          found = True
+                          print(f"Updated:  {line.rstrip()}")
+
+                  output.append(line)
+
+              if changed:
+                  backup = path.with_suffix(
+                      path.suffix + ".sybaos-backup"
+                  )
+                  backup.write_text(original)
+                  path.write_text("".join(output))
+
+          if not found:
+              print(
+                  "No matching URL was found in live-build. "
+                  "The helper may construct the URL indirectly."
+              )
+              sys.exit(1)
+
+          print("Patch applied.")
           PY
 
       - name: Prepare SybaOS configuration
@@ -160,7 +175,7 @@ jobs:
 
           if [ -z "$ISO_FILE" ]; then
             echo "ERROR: No ISO file was generated."
-            echo "Files in the build directory:"
+            echo "Build directory contents:"
             find . -maxdepth 2 -type f | head -100
             exit 1
           fi
