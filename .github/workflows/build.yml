@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   build:
-    name: Build bootable ISO
+    name: Build SybaOS ISO
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -38,6 +38,8 @@ jobs:
             --mirror-bootstrap https://deb.debian.org/debian/ \
             --mirror-chroot https://deb.debian.org/debian/ \
             --mirror-binary https://deb.debian.org/debian/ \
+            --mirror-chroot-security https://security.debian.org/debian-security/ \
+            --mirror-binary-security https://security.debian.org/debian-security/ \
             --archive-areas "main contrib non-free non-free-firmware"
 
           sudo mkdir -p config/package-lists
