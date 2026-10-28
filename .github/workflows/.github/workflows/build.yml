@@ -1,0 +1,69 @@
+
+name: Build SybaOS Glass
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y live-build debootstrap \
+            squashfs-tools xorriso
+
+      - name: Configure SybaOS
+        run: |
+          mkdir sybaos
+          cd sybaos
+
+          sudo lb config \
+            --distribution trixie \
+            --architectures amd64 \
+            --binary-images iso-hybrid \
+            --archive-areas "main contrib non-free non-free-firmware"
+
+          sudo mkdir -p config/package-lists
+
+          sudo tee config/package-lists/sybaos.list.chroot >/dev/null <<'EOF'
+          task-xfce-desktop
+          lightdm
+          firefox-esr
+          libreoffice
+          vlc
+          thunar
+          network-manager
+          network-manager-gnome
+          xfce4-terminal
+          xfce4-whiskermenu-plugin
+          plank
+          picom
+          papirus-icon-theme
+          fonts-noto
+          fonts-noto-color-emoji
+          EOF
+
+      - name: Build ISO
+        run: |
+          cd sybaos
+          sudo lb build
+          sudo find . -maxdepth 1 -type f \
+            -name '*.iso' \
+            -exec cp {} "$GITHUB_WORKSPACE/" \;
+          test -n "$(find "$GITHUB_WORKSPACE" \
+            -maxdepth 1 -name '*.iso' -print -quit)"
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: SybaOS-Glass-ISO
+          path: "*.iso"
+          if-no-files-found: error
+          retention-days: 7
