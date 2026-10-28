@@ -18,7 +18,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install build tools
+        shell: bash
         run: |
+          set -e
           sudo apt-get update
           sudo apt-get install -y \
             live-build \
@@ -34,35 +36,65 @@ jobs:
             ca-certificates \
             python3
 
-      - name: Fix live-build Contents URL
+      - name: Locate and patch live-build
         shell: bash
         run: |
           set -e
 
-          echo "Searching live-build scripts..."
+          echo "Searching for live-build scripts..."
 
-          sudo grep -RIl \
-            'Contents-${LB_ARCHITECTURE}.gz' \
-            /usr/lib/live/build \
-            /usr/share/live/build \
-            2>/dev/null \
-            | while IFS= read -r file; do
+          LB_SCRIPT="$(command -v lb)"
+          echo "lb executable: $LB_SCRIPT"
 
-              echo "Checking: $file"
+          dpkg -L live-build | grep -E 'lb_chroot_linux-image$' || true
 
-              sudo sed -i \
-                's|/dists/${LB_DISTRIBUTION}/Contents-${LB_ARCHITECTURE}.gz|/dists/${LB_DISTRIBUTION}/main/Contents-${LB_ARCHITECTURE}.gz|g' \
-                "$file"
-            done
+          SCRIPT="$(dpkg -L live-build | grep -E '/lb_chroot_linux-image$' | head -n 1 || true)"
 
-          echo "Checking for remaining Contents URL references..."
-          sudo grep -R -n \
-            'Contents-${LB_ARCHITECTURE}.gz' \
-            /usr/lib/live/build \
-            /usr/share/live/build \
-            2>/dev/null || true
+          if [ -z "$SCRIPT" ]; then
+            echo "Kernel helper script not found at the expected path."
+            echo "Listing relevant installed files:"
+            dpkg -L live-build | grep -E 'linux-image|linux_image|live/build' | head -100 || true
+            exit 0
+          fi
+
+          echo "Found helper: $SCRIPT"
+          sudo cp "$SCRIPT" "${SCRIPT}.original"
+
+          sudo python3 - "$SCRIPT" <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '/dists/${LB_DISTRIBUTION}/Contents-${LB_ARCHITECTURE}.gz',
+                  '/dists/${LB_DISTRIBUTION}/main/Contents-${LB_ARCHITECTURE}.gz'
+              ),
+              (
+                  '/dists/$LB_DISTRIBUTION/Contents-$LB_ARCHITECTURE.gz',
+                  '/dists/$LB_DISTRIBUTION/main/Contents-$LB_ARCHITECTURE.gz'
+              ),
+          ]
+
+          updated = text
+          for old, new in replacements:
+              updated = updated.replace(old, new)
+
+          if updated != text:
+              path.write_text(updated)
+              print("Patched the Contents URL.")
+          else:
+              print("No matching URL found; the helper was left unchanged.")
+              print("Relevant lines:")
+              for line in text.splitlines():
+                  if "Contents-" in line or "Contents-" in line.replace(" ", ""):
+                      print(line)
+          PY
 
       - name: Prepare SybaOS configuration
+        shell: bash
         run: |
           set -e
 
@@ -96,6 +128,7 @@ jobs:
           EOF
 
       - name: Configure SybaOS Glass
+        shell: bash
         run: |
           set -e
 
@@ -112,6 +145,7 @@ jobs:
             --archive-areas "main contrib non-free non-free-firmware"
 
       - name: Build ISO
+        shell: bash
         run: |
           set -e
           sudo lb build
@@ -122,7 +156,7 @@ jobs:
         run: |
           set -e
 
-          ISO_FILE="$(find . -maxdepth 2 -type f -name '*.iso' -print -quit)"
+          ISO_FILE="$(find . -maxdepth 3 -type f -name '*.iso' -print -quit)"
 
           if [ -z "$ISO_FILE" ]; then
             echo "ERROR: No ISO file was generated."
