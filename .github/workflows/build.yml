@@ -21,6 +21,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           sudo apt-get update
           sudo apt-get install -y \
             live-build \
@@ -31,9 +32,14 @@ jobs:
             grub-efi-amd64-bin \
             mtools \
             dosfstools \
-            syslinux-utils \
+            syslinux \
+            syslinux-common \
+            isolinux \
             ca-certificates \
             wget
+
+          echo "=== Checking ISOLINUX files ==="
+          dpkg -L isolinux | grep -E '/(isolinux\.bin|vesamenu\.c32)$' || true
 
       - name: Prepare SybaOS Glass
         shell: bash
@@ -44,10 +50,10 @@ jobs:
           mkdir -p config/archives
           mkdir -p config/includes.chroot/etc/skel
 
-          # Remove previously generated live-build package selections.
+          # Remove old live-build package selections.
           rm -f config/package-lists/live.list.chroot
 
-          # Remove stale SysV backend selections from existing package lists.
+          # Remove stale SysV backend selections.
           find config/package-lists -type f \
             -exec sed -i \
             '/^[[:space:]]*live-config-sysvinit[[:space:]]*$/d' {} +
@@ -79,9 +85,7 @@ jobs:
           deb https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
           EOF
 
-          echo "=== Package lists before configuration ==="
-          find config/package-lists -maxdepth 1 -type f -print
-
+          echo "=== Checking package selections ==="
           if grep -R -n 'live-config-sysvinit' config/package-lists; then
             echo "ERROR: SysV backend is still selected."
             exit 1
@@ -105,23 +109,18 @@ jobs:
             --security false \
             --archive-areas "main contrib non-free non-free-firmware"
 
-      - name: Verify init selection
+      - name: Verify bootloader files
         shell: bash
         run: |
           set -e
 
-          echo "=== Generated live package list ==="
-          if [ -f config/package-lists/live.list.chroot ]; then
-            cat config/package-lists/live.list.chroot
-          else
-            echo "No generated live.list.chroot found."
-          fi
+          echo "=== ISOLINUX package files ==="
+          dpkg -L isolinux | grep -E '/(isolinux\.bin|vesamenu\.c32)$' || true
 
-          echo "=== Checking for conflicting backend ==="
-          if grep -R -n 'live-config-sysvinit' config/package-lists; then
-            echo "ERROR: live-config-sysvinit is still selected."
-            exit 1
-          fi
+          echo "=== Candidate bootloader paths ==="
+          find /usr/lib/ISOLINUX /usr/lib/syslinux /usr/share/syslinux \
+            -type f \( -name isolinux.bin -o -name vesamenu.c32 \) \
+            2>/dev/null || true
 
           echo "=== live-build version ==="
           lb --version
