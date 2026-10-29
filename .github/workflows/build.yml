@@ -32,21 +32,24 @@ jobs:
             mtools \
             dosfstools \
             syslinux-utils \
-            wget \
             ca-certificates \
-            python3
+            wget
 
-      - name: Prepare SybaOS configuration
+      - name: Prepare SybaOS Glass
         shell: bash
         run: |
           set -e
 
-          sudo mkdir -p config/package-lists
-          sudo mkdir -p config/archives
-          sudo mkdir -p config/includes.chroot/etc/skel
+          mkdir -p config/package-lists
+          mkdir -p config/archives
+          mkdir -p config/includes.chroot/etc/skel
 
-          # Main SybaOS package list.
-          cat <<'EOF' | sudo tee config/package-lists/sybaos.list.chroot
+          # Remove stale selections of the conflicting backend.
+          find config/package-lists -type f \
+            -exec sed -i \
+            '/^[[:space:]]*live-config-sysvinit[[:space:]]*$/d' {} +
+
+          cat > config/package-lists/sybaos.list.chroot <<'EOF'
           linux-image-amd64
           live-boot
           live-config
@@ -69,23 +72,28 @@ jobs:
           fonts-noto-color-emoji
           EOF
 
-          # Explicitly request the systemd live-config component.
-          cat <<'EOF' | sudo tee config/package-lists/zz-systemd.list.chroot
-          live-config
-          live-config-systemd
-          systemd-sysv
+          # Prevent APT from choosing the SysV live-config backend.
+          cat > config/archives/zz-no-sysv.pref.chroot <<'EOF'
+          Package: live-config-sysvinit
+          Pin: version *
+          Pin-Priority: -1
           EOF
 
-          # Debian security repository.
-          cat <<'EOF' | sudo tee config/archives/security.list.chroot
+          cat > config/archives/security.list.chroot <<'EOF'
           deb https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
           EOF
 
-          echo "=== Checking package lists for conflicting init systems ==="
-          grep -R -n -E 'live-config-sysvinit|sysvinit-core|openrc' \
-            config/package-lists || true
+          echo "=== Checking for conflicting package selections ==="
+          if grep -R -n -E 'live-config-sysvinit' \
+            config/package-lists; then
+            echo "ERROR: SysV backend is still listed."
+            exit 1
+          fi
 
-      - name: Configure SybaOS Glass
+          echo "=== SybaOS package list ==="
+          cat config/package-lists/sybaos.list.chroot
+
+      - name: Configure live-build
         shell: bash
         run: |
           set -e
@@ -102,18 +110,19 @@ jobs:
             --security false \
             --archive-areas "main contrib non-free non-free-firmware"
 
-      - name: Check live-build init configuration
+      - name: Check configuration
         shell: bash
         run: |
-          echo "=== Package list files ==="
-          find config/package-lists -maxdepth 1 -type f -print
+          echo "=== live-build version ==="
+          lb --version
 
-          echo "=== Init-related configuration ==="
-          grep -R -n -E 'live-config-sysvinit|sysvinit-core|openrc|systemd-sysv' \
+          echo "=== Init backend references ==="
+          grep -R -n -E \
+            'live-config-sysvinit|sysvinit-core|systemd-sysv' \
             config 2>/dev/null || true
 
-          echo "=== live-build version ==="
-          lb --version || true
+          echo "=== APT pin file ==="
+          cat config/archives/zz-no-sysv.pref.chroot
 
       - name: Build ISO
         shell: bash
@@ -121,21 +130,21 @@ jobs:
           set -e
           sudo lb build
 
-      - name: Find generated ISO
+      - name: Locate ISO
         id: find_iso
         shell: bash
         run: |
           set -e
 
-          ISO_FILE="$(find . -maxdepth 4 -type f -name '*.iso' -print -quit)"
+          ISO_FILE="$(find . -maxdepth 5 -type f \
+            -name '*.iso' -print -quit)"
 
           if [ -z "$ISO_FILE" ]; then
-            echo "ERROR: No ISO file was generated."
-            find . -maxdepth 2 -type f | head -100
+            echo "ERROR: No ISO was generated."
             exit 1
           fi
 
-          echo "Found ISO: $ISO_FILE"
+          echo "Found: $ISO_FILE"
           echo "iso_file=$ISO_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Upload SybaOS Glass ISO
