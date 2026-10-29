@@ -36,7 +36,7 @@ jobs:
             ca-certificates \
             python3
 
-      - name: Prepare SybaOS package lists
+      - name: Prepare SybaOS configuration
         shell: bash
         run: |
           set -e
@@ -48,6 +48,8 @@ jobs:
           cat <<'EOF' | sudo tee config/package-lists/sybaos.list.chroot
           linux-image-amd64
           live-boot
+          live-config
+          live-config-systemd
           systemd-sysv
           task-xfce-desktop
           lightdm
@@ -70,6 +72,9 @@ jobs:
           deb https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
           EOF
 
+          # Prefer the systemd live-config component.
+          echo "live-config-systemd" | sudo tee config/package-lists/zz-systemd.list.chroot
+
       - name: Configure SybaOS Glass
         shell: bash
         run: |
@@ -86,6 +91,19 @@ jobs:
             --mirror-binary https://deb.debian.org/debian/ \
             --security false \
             --archive-areas "main contrib non-free non-free-firmware"
+
+      - name: Verify live-config packages
+        shell: bash
+        run: |
+          set -e
+
+          echo "Checking available live-config packages..."
+          apt-cache show live-config-systemd >/dev/null
+
+          if apt-cache show live-config-sysvinit >/dev/null; then
+            echo "SysV init component exists in the repository."
+            echo "The package lists explicitly select the systemd component."
+          fi
 
       - name: Build ISO
         shell: bash
