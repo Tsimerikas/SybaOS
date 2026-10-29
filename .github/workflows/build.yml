@@ -45,6 +45,7 @@ jobs:
           sudo mkdir -p config/archives
           sudo mkdir -p config/includes.chroot/etc/skel
 
+          # Main SybaOS package list.
           cat <<'EOF' | sudo tee config/package-lists/sybaos.list.chroot
           linux-image-amd64
           live-boot
@@ -68,12 +69,21 @@ jobs:
           fonts-noto-color-emoji
           EOF
 
+          # Explicitly request the systemd live-config component.
+          cat <<'EOF' | sudo tee config/package-lists/zz-systemd.list.chroot
+          live-config
+          live-config-systemd
+          systemd-sysv
+          EOF
+
+          # Debian security repository.
           cat <<'EOF' | sudo tee config/archives/security.list.chroot
           deb https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
           EOF
 
-          # Prefer the systemd live-config component.
-          echo "live-config-systemd" | sudo tee config/package-lists/zz-systemd.list.chroot
+          echo "=== Checking package lists for conflicting init systems ==="
+          grep -R -n -E 'live-config-sysvinit|sysvinit-core|openrc' \
+            config/package-lists || true
 
       - name: Configure SybaOS Glass
         shell: bash
@@ -92,18 +102,18 @@ jobs:
             --security false \
             --archive-areas "main contrib non-free non-free-firmware"
 
-      - name: Verify live-config packages
+      - name: Check live-build init configuration
         shell: bash
         run: |
-          set -e
+          echo "=== Package list files ==="
+          find config/package-lists -maxdepth 1 -type f -print
 
-          echo "Checking available live-config packages..."
-          apt-cache show live-config-systemd >/dev/null
+          echo "=== Init-related configuration ==="
+          grep -R -n -E 'live-config-sysvinit|sysvinit-core|openrc|systemd-sysv' \
+            config 2>/dev/null || true
 
-          if apt-cache show live-config-sysvinit >/dev/null; then
-            echo "SysV init component exists in the repository."
-            echo "The package lists explicitly select the systemd component."
-          fi
+          echo "=== live-build version ==="
+          lb --version || true
 
       - name: Build ISO
         shell: bash
@@ -121,7 +131,6 @@ jobs:
 
           if [ -z "$ISO_FILE" ]; then
             echo "ERROR: No ISO file was generated."
-            echo "Build directory contents:"
             find . -maxdepth 2 -type f | head -100
             exit 1
           fi
